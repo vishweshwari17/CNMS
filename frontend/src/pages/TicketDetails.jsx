@@ -4,7 +4,7 @@
 // ID FLOW (CNMS side):
 //   useParams() gives  id  = CNMS DB primary key  (e.g. "42")
 //   ticket.id          = CNMS DB primary key       (used for /ack, /resolve, /comment)
-//   ticket.global_ticket_id = shared key with LNMS (used only for display)
+//   ticket.ticket_uid  = shared key with LNMS      (used for display / sync reference)
 //
 // ALL API calls use  id  from useParams() — never ticket.id which may be undefined
 // until the fetch resolves.
@@ -323,7 +323,7 @@ export default function TicketDetail() {
             <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Ticket</div>
             {/* ✅ Show human-readable short_id; fall back through available fields */}
             <div className="text-2xl font-bold text-blue-700 font-mono mb-3">
-              {ticket.short_id || ticket.global_ticket_id || ticket.id}
+              {ticket.ticket_uid || ticket.short_id || ticket.id}
             </div>
 
             <div className="flex flex-wrap gap-2 mb-2">
@@ -373,6 +373,7 @@ export default function TicketDetail() {
             <div className="space-y-3">
               {[
                 { l: "Alarm ID",  v: ticket.alarm_uid || ticket.alarm_id },
+                { l: "LNMS Ticket", v: ticket.ticket_uid || ticket.short_id || ticket.id },
                 { l: "LNMS Node", v: ticket.lnms_node_id },
                 { l: "Device",    v: ticket.device_name },
                 { l: "Title",     v: ticket.title },
@@ -494,7 +495,7 @@ export default function TicketDetail() {
       )}
 
       <div className="text-center text-xs text-gray-300 mt-5">
-        CNMS Ticket ID: {ticket.id} · Global ID: {ticket.global_ticket_id}
+        CNMS Row ID: {ticket.id} · Shared Ticket ID: {ticket.ticket_uid || ticket.short_id || ticket.id}
       </div>
     </div>
   );

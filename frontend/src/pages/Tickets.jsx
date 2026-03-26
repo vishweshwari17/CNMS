@@ -68,6 +68,7 @@ export default function Tickets() {
   ========================= */
   const filtered = tickets.filter(t =>
     (
+      t.ticket_uid?.toLowerCase().includes(search.toLowerCase()) ||
       t.short_id?.toLowerCase().includes(search.toLowerCase()) ||
       t.title?.toLowerCase().includes(search.toLowerCase()) ||
       t.device_name?.toLowerCase().includes(search.toLowerCase())
@@ -199,7 +200,7 @@ export default function Tickets() {
             )}
             {visible.map(t => (
               <tr key={t.id} className="hover:bg-blue-50 cursor-pointer" onClick={() => navigate(`/tickets/${t.id}`)}>
-                <td className="px-4 py-3 text-xs font-mono text-blue-600">{t.short_id}</td>
+                <td className="px-4 py-3 text-xs font-mono text-blue-600">{t.ticket_uid || t.short_id || t.id}</td>
                 <td className="px-4 py-3 text-sm font-medium text-gray-800">{t.title}</td>
                 <td className="px-4 py-3"><NodeBadge nodeId={t.lnms_node_id} /></td>
                 <td className="px-4 py-3 text-xs font-mono text-gray-600">{t.device_name}</td>
