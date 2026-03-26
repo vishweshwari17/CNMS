@@ -22,6 +22,7 @@ from typing import Optional
 import aiohttp
 
 from app.models import db
+from app.services.ticket_id import generate_ticket_id
 from app.services.ws_manager import WebSocketManager
 
 log = logging.getLogger("cnms.zabbix")
@@ -189,8 +190,8 @@ class ZabbixPoller:
             )
 
             # Auto-create ticket if not exists
-            ticket_uid = f"TKT-{ZABBIX_NODE_ID}-{alarm_uid}"
-            short_id   = f"#{int(time.time()) % 100000:05d}"
+            ticket_uid = generate_ticket_id(created_at=raised_at)
+            short_id   = ticket_uid
             title      = f"{alarm_type} on {device_name}"
             sla        = SLA_MAP.get(severity, 480)
 
@@ -198,7 +199,7 @@ class ZabbixPoller:
                 """INSERT IGNORE INTO tickets
                    (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name,
                     title, severity, status, sla_minutes, created_at, updated_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,'Open',%s,NOW(),NOW())""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,'OPEN',%s,NOW(),NOW())""",
                 (short_id, ticket_uid, alarm_uid, ZABBIX_NODE_ID,
                  device_name, title, severity, sla),
             )

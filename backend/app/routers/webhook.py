@@ -21,12 +21,14 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Header, Request
 
 from app.models import db
+from app.services.ticket_id import external_ticket_id
+from app.services.sync_diagnostics import record_sync_event
 from app.services.ws_manager import WebSocketManager
 
 log = logging.getLogger("cnms.webhook")
 router = APIRouter(tags=["Webhook"])
 
-WEBHOOK_SECRET = "supersecret123" # optional shared secret
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "supersecret123")
 COMPANY_NODE_ID = os.getenv("COMPANY_NODE_ID", "LNMS-COMPANY-01")
 
 ws_manager: Optional[WebSocketManager] = None
@@ -39,12 +41,9 @@ SLA_MAP = {
     "Info":     2880,
 }
 
-from fastapi import Header, HTTPException
-
 @router.post("/lnms")
 async def lnms_entry(data: dict, x_lnms_secret: str = Header(None)):
-
-    if not x_lnms_secret or x_lnms_secret != SECRET:
+    if WEBHOOK_SECRET and x_lnms_secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     return {"message": "LNMS endpoint working"}
@@ -65,6 +64,15 @@ async def receive_webhook(
 
     msg_type = payload.get("msg_type") or payload.get("type") or payload.get("event_type", "UNKNOWN")
     node_id  = payload.get("node_id") or payload.get("lnms_node_id") or COMPANY_NODE_ID
+
+    record_sync_event(
+        "inbound",
+        "webhook_received",
+        node=node_id,
+        msg_type=msg_type,
+        ticket_id=payload.get("ticket_id") or payload.get("ticket_uid"),
+        alarm_uid=payload.get("alarm_uid") or payload.get("alarm_id"),
+    )
 
     log.info(f"[Webhook] Received {msg_type} from {node_id}")
 
@@ -104,6 +112,7 @@ async def receive_webhook(
 
 async def _handle_alarm_new(payload: dict, node_id: str):
     alarm_uid   = payload.get("alarm_uid") or payload.get("alarm_id") or f"WH-{int(time.time())}"
+    lnms_ticket_id = payload.get("ticket_id") or payload.get("ticket_uid")
     device_name = payload.get("device_name") or payload.get("host") or payload.get("hostname", "unknown")
     alarm_type  = payload.get("alarm_type") or payload.get("type") or payload.get("name", "Unknown")
     severity    = _normalize_severity(payload.get("severity") or payload.get("priority", "Info"))
@@ -119,17 +128,52 @@ async def _handle_alarm_new(payload: dict, node_id: str):
     )
 
     # Auto-create ticket
-    ticket_uid = f"TKT-{node_id}-{alarm_uid}"
-    short_id   = f"#{int(time.time()) % 100000:05d}"
+    ticket_uid = external_ticket_id(
+        raw_ticket_id=lnms_ticket_id,
+        created_at=payload.get("created_at") or payload.get("raised_at") or payload.get("problem_time"),
+    )
+    short_id   = ticket_uid
     title      = payload.get("title") or f"{alarm_type} on {device_name}"
     sla        = SLA_MAP.get(severity, 480)
 
-    await db.execute(
-        """INSERT IGNORE INTO tickets
-           (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name,
-            title, severity, status, sla_minutes, description, created_at, updated_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,'Open',%s,%s,NOW(),NOW())""",
-        (short_id, ticket_uid, alarm_uid, node_id, device_name, title, severity, sla, description),
+    existing_ticket = await db.fetchone(
+        "SELECT id FROM tickets WHERE alarm_uid=%s LIMIT 1",
+        (alarm_uid,),
+    )
+    if existing_ticket:
+        await db.execute(
+            """UPDATE tickets
+               SET short_id=%s,
+                   ticket_uid=%s,
+                   lnms_node_id=%s,
+                   device_name=%s,
+                   title=%s,
+                   severity=%s,
+                   status='OPEN',
+                   sla_minutes=%s,
+                   description=%s,
+                   updated_at=NOW()
+               WHERE id=%s""",
+            (short_id, ticket_uid, node_id, device_name, title, severity, sla, description, existing_ticket["id"]),
+        )
+    else:
+        await db.execute(
+            """INSERT INTO tickets
+               (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name,
+                title, severity, status, sla_minutes, description, created_at, updated_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,'OPEN',%s,%s,NOW(),NOW())""",
+            (short_id, ticket_uid, alarm_uid, node_id, device_name, title, severity, sla, description),
+        )
+
+    record_sync_event(
+        "inbound",
+        "ticket_upserted",
+        node=node_id,
+        ticket_id=ticket_uid,
+        alarm_uid=alarm_uid,
+        title=title,
+        severity=severity,
+        status="OPEN",
     )
 
     await db.execute(
@@ -148,7 +192,7 @@ async def _handle_alarm_resolved(payload: dict, node_id: str):
         (alarm_uid,),
     )
     await db.execute(
-        "UPDATE tickets SET status='Closed', updated_at=NOW() WHERE alarm_uid=%s AND status != 'Closed'",
+        "UPDATE tickets SET status='CLOSED', updated_at=NOW() WHERE alarm_uid=%s AND status != 'CLOSED'",
         (alarm_uid,),
     )
     log.info(f"[Webhook] Alarm {alarm_uid} resolved")

@@ -22,6 +22,7 @@ from typing import Optional
 import aiomysql
 
 from app.models import db as database
+from app.services.ticket_id import external_ticket_id, generate_ticket_id
 
 log = logging.getLogger("cnms.dual_sync")
 
@@ -85,13 +86,14 @@ async def _ensure_ticket(node_id: str, alarm_uid: str, device: str,
     if exists:
         return
 
-    short_id = f"TKT-{alarm_uid[-8:].upper().replace('-','')}"
+    ticket_uid = generate_ticket_id(created_at=datetime.utcnow())
+    short_id = ticket_uid
     await database.execute(
         """INSERT INTO tickets
-           (short_id, alarm_uid, lnms_node_id, device_name, title,
+           (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name, title,
             severity, status, sla_minutes, description, created_at, updated_at)
-           VALUES (%s,%s,%s,%s,%s,%s,'OPEN',240,%s,NOW(),NOW())""",
-        (short_id, alarm_uid, node_id, device or host,
+           VALUES (%s,%s,%s,%s,%s,%s,%s,'OPEN',240,%s,NOW(),NOW())""",
+        (short_id, ticket_uid, alarm_uid, node_id, device or host,
          f"[{severity}] {aname} on {device or host}", severity, desc or ""),
     )
     log.info(f"[SYNC] Ticket created: {short_id} ← {alarm_uid}")
@@ -187,24 +189,47 @@ async def sync_local_lnms():
             )
             lnms_tickets = await cur.fetchall()
             for t in lnms_tickets:
+                ticket_uid = external_ticket_id(
+                    raw_ticket_id=t.get("ticket_id"),
+                    created_at=t.get("created_at"),
+                    fallback_at=t.get("updated_at"),
+                )
                 uid      = f"LOCAL-ALM-{t['alarm_id']}" if t.get("alarm_id") else f"LOCAL-TKT-{t['ticket_id']}"
                 alarm_uid = uid
-                exists = await database.fetchone(
+                existing = await database.fetchone(
                     "SELECT id FROM tickets WHERE alarm_uid=%s", (alarm_uid,)
                 )
-                if not exists:
-                    sev = norm_sev(t.get("severity_calculated") or t.get("severity_original",""))
-                    st_raw = (t.get("status") or "Open").lower()
-                    st_map = {"open":"OPEN","ack":"ACK","resolved":"RESOLVED",
-                              "closed":"CLOSED","reopened":"OPEN"}
-                    status = st_map.get(st_raw, "OPEN")
-                    short_id = f"TKT-{str(t['ticket_id'])[-8:].upper().replace('-','')}"
+                sev = norm_sev(t.get("severity_calculated") or t.get("severity_original",""))
+                st_raw = (t.get("status") or "Open").lower()
+                st_map = {"open":"OPEN","ack":"ACK","resolved":"RESOLVED",
+                          "closed":"CLOSED","reopened":"OPEN"}
+                status = st_map.get(st_raw, "OPEN")
+                short_id = ticket_uid
+                if existing:
                     await database.execute(
-                        """INSERT IGNORE INTO tickets
-                           (short_id, alarm_uid, lnms_node_id, device_name, title,
+                        """UPDATE tickets
+                           SET short_id=%s,
+                               ticket_uid=%s,
+                               lnms_node_id=%s,
+                               device_name=%s,
+                               title=%s,
+                               severity=%s,
+                               status=%s,
+                               description=%s,
+                               updated_at=%s
+                           WHERE id=%s""",
+                        (short_id, ticket_uid, cfg["node_id"],
+                         t.get("device_name",""), t.get("title",""),
+                         sev, status, t.get("description",""),
+                         t.get("updated_at"), existing["id"]),
+                    )
+                else:
+                    await database.execute(
+                        """INSERT INTO tickets
+                           (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name, title,
                             severity, status, sla_minutes, description, created_at, updated_at)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,240,%s,%s,%s)""",
-                        (short_id, alarm_uid, cfg["node_id"],
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,240,%s,%s,%s)""",
+                        (short_id, ticket_uid, alarm_uid, cfg["node_id"],
                          t.get("device_name",""), t.get("title",""),
                          sev, status, t.get("description",""),
                          t.get("created_at"), t.get("updated_at")),
@@ -334,22 +359,44 @@ async def sync_company_lnms():
         []
     )
     for t in tickets:
+        ticket_uid = external_ticket_id(
+            raw_ticket_id=t.get("ticket_id"),
+            created_at=t.get("created_at"),
+            fallback_at=t.get("updated_at"),
+        )
         alarm_uid = f"COMPANY-ALM-{t['alarm_id']}" if t.get("alarm_id") and t["alarm_id"] != "NULL" else f"COMPANY-TKT-{t['ticket_id']}"
-        exists = await database.fetchone("SELECT id FROM tickets WHERE alarm_uid=%s", (alarm_uid,))
-        if not exists:
-            sev    = norm_sev(t.get("severity_calculated") or t.get("severity_original") or t.get("severity",""))
-            st_raw = (t.get("status") or "Open").lower()
-            st_map = {"open":"OPEN","ack":"ACK","resolved":"RESOLVED","closed":"CLOSED","reopened":"OPEN"}
-            status = st_map.get(st_raw, "OPEN")
-            short_id = f"TKT-C{str(t['ticket_id'])[-7:].upper().replace('-','')}"
-            ca = t.get("created_at") if t.get("created_at") not in (None,"NULL","") else None
-            ua = t.get("updated_at") if t.get("updated_at") not in (None,"NULL","") else None
+        existing = await database.fetchone("SELECT id FROM tickets WHERE alarm_uid=%s", (alarm_uid,))
+        sev    = norm_sev(t.get("severity_calculated") or t.get("severity_original") or t.get("severity",""))
+        st_raw = (t.get("status") or "Open").lower()
+        st_map = {"open":"OPEN","ack":"ACK","resolved":"RESOLVED","closed":"CLOSED","reopened":"OPEN"}
+        status = st_map.get(st_raw, "OPEN")
+        short_id = ticket_uid
+        ca = t.get("created_at") if t.get("created_at") not in (None,"NULL","") else None
+        ua = t.get("updated_at") if t.get("updated_at") not in (None,"NULL","") else None
+        if existing:
             await database.execute(
-                """INSERT IGNORE INTO tickets
-                   (short_id,alarm_uid,lnms_node_id,device_name,title,
-                    severity,status,sla_minutes,description,created_at,updated_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,240,%s,%s,%s)""",
-                (short_id, alarm_uid, cfg["node_id"],
+                """UPDATE tickets
+                   SET short_id=%s,
+                       ticket_uid=%s,
+                       lnms_node_id=%s,
+                       device_name=%s,
+                       title=%s,
+                       severity=%s,
+                       status=%s,
+                       description=%s,
+                       updated_at=%s
+                   WHERE id=%s""",
+                (short_id, ticket_uid, cfg["node_id"],
+                 t.get("device_name",""), t.get("title",""),
+                 sev, status, t.get("description",""), ua, existing["id"]),
+            )
+        else:
+            await database.execute(
+                """INSERT INTO tickets
+                   (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name, title,
+                    severity, status, sla_minutes, description, created_at, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,240,%s,%s,%s)""",
+                (short_id, ticket_uid, alarm_uid, cfg["node_id"],
                  t.get("device_name",""), t.get("title",""),
                  sev, status, t.get("description",""), ca, ua),
             )
