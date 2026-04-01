@@ -67,8 +67,7 @@ class LNMSTCPClient:
     # LISTEN FROM CNMS
     # ===============================
     async def listen(self):
-        from app.database import get_db
-        from app.models import Ticket
+        from app.models import db
 
         while True:
             try:
@@ -77,8 +76,16 @@ class LNMSTCPClient:
                 if not data:
                     raise ConnectionError("Disconnected")
 
-                message = json.loads(data.decode().strip())
-                log.info(f"[TCP] Received: {message}")
+                decoded_data = data.decode().strip()
+                if not decoded_data:
+                    continue  # Ignore empty keep-alive lines
+
+                try:
+                    message = json.loads(decoded_data)
+                    log.info(f"[TCP] Received: {message}")
+                except json.JSONDecodeError:
+                    log.warning(f"[TCP] Ignored non-JSON payload: {decoded_data}")
+                    continue
 
                 # ===============================
                 # HANDLE RESPONSE FROM CNMS
@@ -90,27 +97,32 @@ class LNMSTCPClient:
                     resolved_at = message.get("resolved_at")
                     note = message.get("resolution_note")
 
-                    db = next(get_db())
-
-                    ticket = db.query(Ticket).filter(
-                        Ticket.ticket_id == ticket_id
-                    ).first()
+                    ticket = await db.fetchone(
+                        "SELECT id FROM tickets WHERE ticket_uid=%s OR CAST(id AS CHAR)=%s OR short_id=%s LIMIT 1",
+                        (ticket_id, ticket_id, ticket_id)
+                    )
 
                     if ticket:
-                        ticket.status = status
-
-                        if status == "ACK":
-                            ticket.acknowledged_at = resolved_at
-
-                        if status == "Resolved":
-                            ticket.resolved_at = resolved_at
-
-                        if status == "Closed":
-                            ticket.closed_at = resolved_at
-
-                        ticket.resolution_note = note
-
-                        db.commit()
+                        # Normalize status to match MariaDB Enum where possible
+                        if status == 'Closed' or status == 'Resolved':
+                            norm_status = 'CLOSED'
+                            alarm_status = "'RESOLVED'"
+                        else:
+                            norm_status = status.upper() if status else 'OPEN'
+                            alarm_status = "'ACTIVE'"
+                            
+                        query = f"""
+                            UPDATE tickets 
+                            SET 
+                                status=%s, 
+                                resolution_note=%s, 
+                                resolved_at=COALESCE(%s, resolved_at),
+                                updated_at=NOW(),
+                                alarm_status={alarm_status},
+                                last_alarm_update=NOW()
+                            WHERE id=%s
+                        """
+                        await db.execute(query, (norm_status, note, resolved_at, ticket["id"]))
 
                         log.info(f"[TCP] Ticket updated: {ticket_id}")
 

@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.models import db as database
 from app.services.ws_manager import WebSocketManager
 from app.services import dual_lnms_sync as sync_module
+from app.services.sla_manager import sla_manager
 from app.routers import nodes, alarms, devices, tickets, dashboard, admin, webhook
 import app.routers.webhook as webhook_mod
 
@@ -44,6 +45,9 @@ async def lifespan(app: FastAPI):
     # Start LNMS sync poller
     poller.start()
     log.info("[DualPoller] Both LNMS sync started")
+    
+    # Start SLA Manager
+    sla_manager.start()
 
     # ✅ Start TCP client (important)
     asyncio.create_task(tcp_client.connect())
@@ -53,6 +57,7 @@ async def lifespan(app: FastAPI):
 
     log.info("Shutting down...")
     await poller.stop()
+    await sla_manager.stop()
     await database.close_pool()
 
 

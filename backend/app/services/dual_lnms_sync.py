@@ -79,7 +79,7 @@ async def _register_node(node_id: str, label: str, ip: str, status: str):
 
 # ── Ticket creator ────────────────────────────────────────────────────────────
 async def _ensure_ticket(node_id: str, alarm_uid: str, device: str,
-                          host: str, ip: str, aname: str, severity: str, desc: str):
+                          host: str, ip: str, aname: str, severity: str, desc: str, alarm_source: str):
     exists = await database.fetchone(
         "SELECT id FROM tickets WHERE alarm_uid=%s", (alarm_uid,)
     )
@@ -91,10 +91,11 @@ async def _ensure_ticket(node_id: str, alarm_uid: str, device: str,
     await database.execute(
         """INSERT INTO tickets
            (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name, title,
-            severity, status, sla_minutes, description, created_at, updated_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,'OPEN',240,%s,NOW(),NOW())""",
+            severity, status, sla_minutes, description, created_at, updated_at,
+            alarm_status, alarm_source, last_alarm_update)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,'OPEN',240,%s,NOW(),NOW(),'ACTIVE',%s,NOW())""",
         (short_id, ticket_uid, alarm_uid, node_id, device or host,
-         f"[{severity}] {aname} on {device or host}", severity, desc or ""),
+         f"[{severity}] {aname} on {device or host}", severity, desc or "", alarm_source),
     )
     log.info(f"[SYNC] Ticket created: {short_id} ← {alarm_uid}")
     if ws_manager:
@@ -109,7 +110,7 @@ async def _ensure_ticket(node_id: str, alarm_uid: str, device: str,
 # ── Alarm upsert ─────────────────────────────────────────────────────────────
 async def _upsert_alarm(node_id: str, alarm_uid: str, device: str, host: str,
                          ip: str, aname: str, severity: str, desc: str,
-                         status: str, raised_at, resolved_at=None):
+                         status: str, raised_at, resolved_at=None, alarm_source: str='LNMS'):
     # Ensure alarm_type is never null
     alarm_type = aname or device or host or "Unknown Alarm"
 
@@ -127,13 +128,19 @@ async def _upsert_alarm(node_id: str, alarm_uid: str, device: str, host: str,
         )
         if status == "ACTIVE":
             await _ensure_ticket(node_id, alarm_uid, device, host, ip,
-                                  alarm_type, severity, desc)
+                                  alarm_type, severity, desc, alarm_source)
     else:
         if existing["status"] != status:
             await database.execute(
                 """UPDATE alarms SET status=%s, resolved_at=%s
                    WHERE alarm_uid=%s""",
                 (status, resolved_at, alarm_uid),
+            )
+            tkt_status = 'CLOSED' if status == 'RESOLVED' else 'OPEN'
+            await database.execute(
+                """UPDATE tickets SET status=%s, alarm_status=%s, last_alarm_update=NOW()
+                   WHERE alarm_uid=%s AND status != %s""",
+                (tkt_status, status, alarm_uid, tkt_status)
             )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -181,6 +188,7 @@ async def sync_local_lnms():
                     status      = status,
                     raised_at   = a.get("problem_time") or a.get("created_at"),
                     resolved_at = a.get("resolved_time"),
+                    alarm_source= 'LNMS'
                 )
 
             # ── Tickets already in lnms_db → mirror into cnms tickets ───────
@@ -216,23 +224,30 @@ async def sync_local_lnms():
                                severity=%s,
                                status=%s,
                                description=%s,
-                               updated_at=%s
+                               updated_at=%s,
+                               alarm_status=%s,
+                               alarm_source='LNMS',
+                               last_alarm_update=NOW()
                            WHERE id=%s""",
                         (short_id, ticket_uid, cfg["node_id"],
                          t.get("device_name",""), t.get("title",""),
                          sev, status, t.get("description",""),
-                         t.get("updated_at"), existing["id"]),
+                         t.get("updated_at"), 
+                         'RESOLVED' if status in ('CLOSED', 'RESOLVED') else 'ACTIVE', 
+                         existing["id"]),
                     )
                 else:
                     await database.execute(
                         """INSERT INTO tickets
                            (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name, title,
-                            severity, status, sla_minutes, description, created_at, updated_at)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,240,%s,%s,%s)""",
+                            severity, status, sla_minutes, description, created_at, updated_at,
+                            alarm_status, alarm_source, last_alarm_update)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,240,%s,%s,%s,%s,'LNMS',NOW())""",
                         (short_id, ticket_uid, alarm_uid, cfg["node_id"],
                          t.get("device_name",""), t.get("title",""),
                          sev, status, t.get("description",""),
-                         t.get("created_at"), t.get("updated_at")),
+                         t.get("created_at"), t.get("updated_at"),
+                         'RESOLVED' if status in ('CLOSED', 'RESOLVED') else 'ACTIVE'),
                     )
 
             log.info(f"[LOCAL] Synced {len(alarms)} alarms, {len(lnms_tickets)} tickets")
@@ -350,12 +365,13 @@ async def sync_company_lnms():
             status      = status,
             raised_at   = raised,
             resolved_at = resolved,
+            alarm_source= 'SPIC-NMS'
         )
 
     # Fetch tickets
     tickets = await asyncio.get_event_loop().run_in_executor(
         None, _ssh_query_dicts, cfg,
-        "SELECT ticket_id,alarm_id,title,device_name,host_name,ip_address,severity_calculated,severity_original,severity,status,description,created_at,updated_at FROM tickets ORDER BY created_at DESC LIMIT 200",
+        "SELECT ticket_id,alarm_id,title,device_name,ip_address,severity,status,description,created_at,updated_at FROM tickets ORDER BY created_at DESC LIMIT 200",
         []
     )
     for t in tickets:
@@ -384,21 +400,28 @@ async def sync_company_lnms():
                        severity=%s,
                        status=%s,
                        description=%s,
-                       updated_at=%s
+                       updated_at=%s,
+                       alarm_status=%s,
+                       alarm_source='SPIC-NMS',
+                       last_alarm_update=NOW()
                    WHERE id=%s""",
                 (short_id, ticket_uid, cfg["node_id"],
                  t.get("device_name",""), t.get("title",""),
-                 sev, status, t.get("description",""), ua, existing["id"]),
+                 sev, status, t.get("description",""), ua, 
+                 'RESOLVED' if status in ('CLOSED', 'RESOLVED') else 'ACTIVE', 
+                 existing["id"]),
             )
         else:
             await database.execute(
                 """INSERT INTO tickets
                    (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name, title,
-                    severity, status, sla_minutes, description, created_at, updated_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,240,%s,%s,%s)""",
+                    severity, status, sla_minutes, description, created_at, updated_at,
+                    alarm_status, alarm_source, last_alarm_update)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,240,%s,%s,%s,%s,'SPIC-NMS',NOW())""",
                 (short_id, ticket_uid, alarm_uid, cfg["node_id"],
                  t.get("device_name",""), t.get("title",""),
-                 sev, status, t.get("description",""), ca, ua),
+                 sev, status, t.get("description",""), ca, ua,
+                 'RESOLVED' if status in ('CLOSED', 'RESOLVED') else 'ACTIVE'),
             )
 
     log.info(f"[COMPANY] Synced {len(alarms)} alarms, {len(tickets)} tickets")

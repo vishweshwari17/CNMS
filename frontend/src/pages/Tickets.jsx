@@ -1,7 +1,7 @@
 // src/pages/Tickets.jsx
 import { useEffect, useState } from "react";
 import { getTickets, getLnmsNodes, handleAcknowledgeTicket, handleResolveTicket, fullSyncFromCnms } from "../api/api";
-import { SevBadge, StatusBadge, NodeBadge, SlaBadge, fmt } from "../components/Badges";
+import { SevBadge, StatusBadge, NodeBadge, SlaBadge, AlarmBadge, fmt } from "../components/Badges";
 import { useNavigate } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 
@@ -182,8 +182,8 @@ export default function Tickets() {
         <table className="w-full text-left">
           <thead className="bg-gray-50">
             <tr>
-              {["ID", "Title", "LNMS Node", "Device", "Severity", "Status", "SLA", "Created", "Actions"].map(h => (
-                <th key={h} className="px-4 py-3 text-xs font-semibold text-blue-700 uppercase">{h}</th>
+              {["ID", "Title", "LNMS Node", "Device", "Severity", "Tkt Status", "Alarm Status", "SLA", "Created", "Actions"].map(h => (
+                <th key={h} className="px-4 py-3 text-xs font-semibold text-blue-700 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
           </thead>
@@ -198,23 +198,30 @@ export default function Tickets() {
                 <td colSpan={9} className="text-center py-8 text-gray-400">No tickets found</td>
               </tr>
             )}
-            {visible.map(t => (
-              <tr key={t.id} className="hover:bg-blue-50 cursor-pointer" onClick={() => navigate(`/tickets/${t.id}`)}>
+            {visible.map(t => {
+              const isBreached = t.sla_status === "BREACHED" && t.status !== "CLOSED" && t.status !== "RESOLVED";
+              return (
+              <tr key={t.id} className={`cursor-pointer transition-colors ${isBreached ? 'bg-red-50 hover:bg-red-100 border-l-4 border-l-red-500' : 'hover:bg-blue-50'}`} onClick={() => navigate(`/tickets/${t.id}`)}>
                 <td className="px-4 py-3 text-xs font-mono text-blue-600">{t.ticket_uid || t.short_id || t.id}</td>
-                <td className="px-4 py-3 text-sm font-medium text-gray-800">{t.title}</td>
+                <td className="px-4 py-3 text-sm font-medium text-gray-800">
+                  {isBreached && <span className="text-red-600 mr-2 animate-pulse" title="SLA Breached">⚠</span>}
+                  {t.title}
+                </td>
                 <td className="px-4 py-3"><NodeBadge nodeId={t.lnms_node_id} /></td>
                 <td className="px-4 py-3 text-xs font-mono text-gray-600">{t.device_name}</td>
                 <td className="px-4 py-3"><SevBadge severity={t.severity} /></td>
                 <td className="px-4 py-3"><StatusBadge status={t.status} /></td>
-                <td className="px-4 py-3"><SlaBadge used={t.sla_used} total={t.sla_minutes} status={t.status} /></td>
-                <td className="px-4 py-3 text-xs text-gray-400 font-mono">{fmt(t.created_at)}</td>
+                <td className="px-4 py-3"><AlarmBadge status={t.alarm_status} source={t.alarm_source} updatedAt={t.last_alarm_update} /></td>
+                <td className="px-4 py-3"><SlaBadge sla_status={t.sla_status} used={t.sla_used} total={t.sla_limit_minutes || t.sla_minutes} status={t.status} created_at={t.created_at} /></td>
+                <td className="px-4 py-3 text-xs text-gray-400 font-mono whitespace-nowrap">{fmt(t.created_at).split(',')[0]}</td>
                 <td className="px-4 py-3 flex gap-2">
-                  <button onClick={(e) => { e.stopPropagation(); navigate(`/tickets/${t.id}`); }} className="px-3 py-1 bg-gray-800 text-white text-xs rounded hover:bg-gray-700">View</button>
-                  {t.status === "OPEN" && <button onClick={async (e) => { e.stopPropagation(); await handleAcknowledgeTicket(t.id); load(); }} className="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600">ACK</button>}
-                  {t.status === "ACK" && <button onClick={async (e) => { e.stopPropagation(); const note = prompt("Enter resolution note") || "Resolved via UI"; await handleResolveTicket(t.id, "Admin", note); load(); }} className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700">Resolve</button>}
+                  <button onClick={(e) => { e.stopPropagation(); navigate(`/tickets/${t.id}`); }} className="px-3 py-1 bg-gray-800 text-white text-xs rounded hover:bg-gray-700 shadow-sm">View</button>
+                  {t.status === "OPEN" && <button onClick={async (e) => { e.stopPropagation(); await handleAcknowledgeTicket(t.id); load(); }} className="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 shadow-sm">ACK</button>}
+                  {t.status === "ACK" && <button onClick={async (e) => { e.stopPropagation(); const note = prompt("Enter resolution note") || "Resolved via UI"; await handleResolveTicket(t.id, "Admin", note); load(); }} className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 shadow-sm">Resolve</button>}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

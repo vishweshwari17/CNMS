@@ -136,6 +136,8 @@ async def _handle_alarm_new(payload: dict, node_id: str):
     title      = payload.get("title") or f"{alarm_type} on {device_name}"
     sla        = SLA_MAP.get(severity, 480)
 
+    source = 'SPIC-NMS' if node_id == COMPANY_NODE_ID else 'LNMS'
+    
     existing_ticket = await db.fetchone(
         "SELECT id FROM tickets WHERE alarm_uid=%s LIMIT 1",
         (alarm_uid,),
@@ -152,17 +154,21 @@ async def _handle_alarm_new(payload: dict, node_id: str):
                    status='OPEN',
                    sla_minutes=%s,
                    description=%s,
-                   updated_at=NOW()
+                   updated_at=NOW(),
+                   alarm_status='ACTIVE',
+                   alarm_source=%s,
+                   last_alarm_update=NOW()
                WHERE id=%s""",
-            (short_id, ticket_uid, node_id, device_name, title, severity, sla, description, existing_ticket["id"]),
+            (short_id, ticket_uid, node_id, device_name, title, severity, sla, description, source, existing_ticket["id"]),
         )
     else:
         await db.execute(
             """INSERT INTO tickets
                (short_id, ticket_uid, alarm_uid, lnms_node_id, device_name,
-                title, severity, status, sla_minutes, description, created_at, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,'OPEN',%s,%s,NOW(),NOW())""",
-            (short_id, ticket_uid, alarm_uid, node_id, device_name, title, severity, sla, description),
+                title, severity, status, sla_minutes, description, created_at, updated_at,
+                alarm_status, alarm_source, last_alarm_update)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,'OPEN',%s,%s,NOW(),NOW(),'ACTIVE',%s,NOW())""",
+            (short_id, ticket_uid, alarm_uid, node_id, device_name, title, severity, sla, description, source),
         )
 
     record_sync_event(
@@ -192,7 +198,7 @@ async def _handle_alarm_resolved(payload: dict, node_id: str):
         (alarm_uid,),
     )
     await db.execute(
-        "UPDATE tickets SET status='CLOSED', updated_at=NOW() WHERE alarm_uid=%s AND status != 'CLOSED'",
+        "UPDATE tickets SET status='CLOSED', alarm_status='RESOLVED', last_alarm_update=NOW(), updated_at=NOW() WHERE alarm_uid=%s AND status != 'CLOSED'",
         (alarm_uid,),
     )
     log.info(f"[Webhook] Alarm {alarm_uid} resolved")

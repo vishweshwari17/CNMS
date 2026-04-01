@@ -16,8 +16,8 @@ LNMS_STATUS_ENDPOINTS = {
         ("POST", "http://127.0.0.1:8000/cnms/update-ticket"),
     ],
     "LNMS-COMPANY-01": [
-        ("PUT", "http://192.78.10.111:8000/tickets/update_from_cnms"),
-        ("POST", "http://192.78.10.111:8000/cnms/update-ticket"),
+        ("PUT", "http://127.0.0.1:8000/tickets/update_from_cnms"),
+        ("POST", "http://127.0.0.1:8000/cnms/update-ticket"),
     ],
 }
 
@@ -166,6 +166,21 @@ async def get_ticket(ticket_ref: str):
     )
     ticket["messages"] = messages
     return ticket
+
+@router.get("/{id}/sla")
+async def get_ticket_sla(id: int):
+    ticket = await db.fetchone(
+        "SELECT id, sla_used, sla_limit_minutes, sla_minutes, sla_status FROM tickets WHERE id=%s", (id,)
+    )
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+        
+    return {
+        "ticket_id": ticket["id"],
+        "elapsed_time": ticket["sla_used"] or 0,
+        "sla_limit": ticket["sla_limit_minutes"] or ticket["sla_minutes"] or 60,
+        "sla_status": ticket["sla_status"] or "ON_TIME"
+    }
 
 
 @router.post("/{id}/comment")
