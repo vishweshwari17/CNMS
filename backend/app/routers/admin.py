@@ -45,7 +45,7 @@ async def get_tcp_log(
 async def get_audit_logs(limit: int = Query(100, ge=1, le=1000)):
     return await db.fetchall(
         """SELECT log_id, user_name, action, entity_type, entity_id, created_at
-           FROM   audit_log
+           FROM   audit_logs
            ORDER  BY created_at DESC
            LIMIT  %s""",
         (limit,)

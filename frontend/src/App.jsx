@@ -9,6 +9,9 @@ import TicketList from "./pages/Tickets";
 import Devices from "./pages/Devices";
 import { Administration, AuditLogs } from "./pages/AdminPages";
 import TicketDetails from "./pages/TicketDetails";
+import SyncDiagnostics from "./pages/SyncDiagnostics";
+import TrendAnalysis from "./pages/TrendAnalysis";
+
 export default function App() {
   const [lnmsNodes, setLnmsNodes] = useState([]);
 
@@ -16,7 +19,7 @@ export default function App() {
     getLnmsNodes().then(r => setLnmsNodes(r.data)).catch(()=>{});
 
     // WebSocket for real-time push updates
-    const wsUrl = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace("http","ws") + "/ws";
+    const wsUrl = (import.meta.env.VITE_API_URL || "http://localhost:8001").replace("http","ws") + "/ws";
     let ws;
     const connect = () => {
       ws = new WebSocket(wsUrl);
@@ -43,6 +46,8 @@ export default function App() {
               <Route path="/"                    element={<Dashboard />} />
               <Route path="/alarms"              element={<Alarms />} />
               <Route path="/correlated-alarms"   element={<Alarms correlated />} />
+              <Route path="/analysis"            element={<TrendAnalysis />} />
+              <Route path="/diagnostics"         element={<SyncDiagnostics />} />
               <Route path="/tickets"             element={<TicketList />} />
               <Route path="/tickets/:id"         element={<TicketDetails />} />
               <Route path="/devices"             element={<Devices />} />

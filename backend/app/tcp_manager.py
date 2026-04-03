@@ -84,7 +84,8 @@ class LNMSTCPClient:
                     message = json.loads(decoded_data)
                     log.info(f"[TCP] Received: {message}")
                 except json.JSONDecodeError:
-                    log.warning(f"[TCP] Ignored non-JSON payload: {decoded_data}")
+                    if len(decoded_data) > 5:
+                        log.warning(f"[TCP] Ignored non-JSON payload: {decoded_data}")
                     continue
 
                 # ===============================

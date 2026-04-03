@@ -3,7 +3,7 @@ import { useState } from "react";
 import {
   LayoutDashboard, Bell, Activity, Ticket,
   Server, Settings, ClipboardList,
-  ChevronDown, ChevronRight, Menu, Radio
+  ChevronDown, ChevronRight, Menu, Radio, Terminal
 } from "lucide-react";
 
 const LNMS_COLORS = {
@@ -57,7 +57,9 @@ export default function Sidebar({ lnmsNodes = [] }) {
         {/* Overview */}
         <div>
           <SectionLabel>Overview</SectionLabel>
-          <NavLink to="/"         label="Dashboard"  Icon={LayoutDashboard} />
+          <NavLink to="/"            label="Dashboard"  Icon={LayoutDashboard} />
+          <NavLink to="/analysis"    label="Trend Analysis" Icon={Activity} />
+          <NavLink to="/diagnostics" label="Sync Diagnostics" Icon={Terminal} />
         </div>
 
         {/* Alarm Management */}

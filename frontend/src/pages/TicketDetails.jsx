@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getTicket, addComment, acknowledgeTicket, resolveTicket } from "../api/api";
+import { getTicket, addComment, acknowledgeTicket, resolveTicket, closeTicket } from "../api/api";
 import {
   ArrowLeft, Send, CheckCheck, AlertTriangle,
   CheckCircle2, RefreshCw, Wifi, WifiOff, X
@@ -250,9 +250,19 @@ export default function TicketDetail() {
   const handleResolve = async () => {
     setSyncing(true);
     try {
-      // ✅ PUT /tickets/:id/resolve  — id from useParams
       await resolveTicket(id, { resolution_note: resolveNote || "Resolved via CNMS" });
       setResolveModal(false);
+      await fetchTicket(true);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  /* ── Close (CNMS operator closes) ── */
+  const handleClose = async () => {
+    setSyncing(true);
+    try {
+      await closeTicket(id);
       await fetchTicket(true);
     } finally {
       setSyncing(false);
@@ -355,6 +365,13 @@ export default function TicketDetail() {
                     {syncing ? "Resolving…" : "✓ Resolve Ticket"}
                   </button>
                 )}
+                {status === "RESOLVED" && (
+                  <button onClick={handleClose} disabled={syncing}
+                    className="w-full py-2.5 rounded-xl font-semibold text-sm text-white disabled:opacity-60 active:scale-95 transition-all"
+                    style={{ background: "linear-gradient(135deg,#6b7280,#4b5563)", boxShadow: "0 4px 14px #6b728040" }}>
+                    {syncing ? "Closing…" : "✓ Close Ticket"}
+                  </button>
+                )}
               </div>
             )}
             {isResolved && (
@@ -378,7 +395,9 @@ export default function TicketDetail() {
                 { l: "Device",    v: ticket.device_name },
                 { l: "Title",     v: ticket.title },
                 { l: "Created",   v: fmt(ticket.created_at) },
-                ...(ticket.resolved_at ? [{ l: "Resolved", v: fmt(ticket.resolved_at) }] : []),
+                ...(ticket.alarm_status ? [{ l: "Alarm Status", v: ticket.alarm_status }] : []),
+                ...(ticket.resolved_at ? [{ l: "Resolved At", v: fmt(ticket.resolved_at) }] : []),
+                ...(ticket.resolved_by ? [{ l: "Resolved By", v: ticket.resolved_by }] : []),
               ].map(({ l, v }) => (
                 <div key={l} className="flex justify-between items-start gap-4">
                   <span className="text-xs text-gray-400 shrink-0 w-24">{l}</span>

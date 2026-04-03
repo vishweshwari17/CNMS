@@ -1,6 +1,6 @@
 // ── Administration ────────────────────────────────────────────
 import { useEffect, useState } from "react";
-import { getLnmsNodes, getAuditLogs, getTcpLog } from "../api/api";
+import { getLnmsNodes, getAuditLogs, getTcpLogs } from "../api/api";
 import { NodeBadge, fmt } from "../components/Badges";
 import { RefreshCw } from "lucide-react";
 export function Administration() {
@@ -11,7 +11,7 @@ export function Administration() {
   const load = async () => {
     setLoading(true);
     try {
-      const [n, t] = await Promise.all([getLnmsNodes(), getTcpLog(20)]);
+      const [n, t] = await Promise.all([getLnmsNodes(), getTcpLogs(20)]);
       setNodes(n.data); setTcpLog(t.data);
     } catch(e){ console.error(e); }
     setLoading(false);

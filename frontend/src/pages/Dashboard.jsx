@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getDashboardStats, getLnmsNodes, getTickets } from "../api/api";
 import { SevBadge, StatusBadge, NodeBadge, SlaBadge, fmt } from "../components/Badges";
 import { useNavigate } from "react-router-dom";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, AlertTriangle } from "lucide-react";
 
 const SEV_ORDER = ["Critical","Major","Minor","Warning","Info"];
 const SEV_COLOR = { Critical:"#dc2626",Major:"#ea580c",Minor:"#ca8a04",Warning:"#2563eb",Info:"#94a3b8" };
@@ -42,6 +42,17 @@ export default function Dashboard() {
           <RefreshCw size={14} className={loading?"animate-spin":""} /> Refresh
         </button>
       </div>
+ 
+      {/* SLA Alert Banner */}
+      {stats?.sla_compliance_perc < 95 && (
+        <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg flex items-center gap-3 animate-pulse">
+          <AlertTriangle className="text-red-500" size={20} />
+          <div>
+            <p className="text-sm font-bold text-red-800">SLA BREACH ALERT</p>
+            <p className="text-xs text-red-600">Current compliance is at {stats?.sla_compliance_perc}%. Immediate action required on open tickets.</p>
+          </div>
+        </div>
+      )}
 
       {/* LNMS Node Status */}
       <div className="grid grid-cols-2 gap-4 mb-6">
@@ -59,23 +70,21 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
-
       {/* KPIs */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-4 gap-4 mb-6">
         {[
-          {label:"Total Tickets", value:(tk.Open||0)+(tk.ACK||0)+(tk.Closed||0), color:"text-gray-800"},
-          {label:"Open",          value:tk.Open||0,   color:"text-blue-600"},
-          {label:"ACK",           value:tk.ACK||0,    color:"text-orange-600"},
-          {label:"Closed",        value:tk.Closed||0, color:"text-green-600"},
-          {label:"Active Alarms", value:stats?.alarms?.Active||0, color:"text-red-600"},
+          {label:"Open Tickets",  value:tk.OPEN||0,   color:"text-blue-600"},
+          {label:"Active Alarms", value:stats?.alarms?.ACTIVE||0, color:"text-red-600"},
+          {label:"SLA Compliance",value:`${stats?.sla_compliance_perc??100}%`, color:"text-green-600"},
+          {label:"System Urgency",value:stats?.priority_distribution?.Critical > 0 ? "CRITICAL" : "STABLE", color:stats?.priority_distribution?.Critical > 0 ? "text-red-700 animate-pulse" : "text-green-600"},
         ].map(k => (
           <div key={k.label} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
             <div className="text-xs text-gray-400 font-medium mb-1">{k.label}</div>
-            <div className={`text-3xl font-bold font-mono ${k.color}`}>{loading ? "—" : k.value}</div>
+            <div className={`text-2xl font-bold font-mono ${k.color}`}>{loading ? "—" : k.value}</div>
           </div>
         ))}
       </div>
-
+ 
       {/* Charts Row */}
       <div className="grid grid-cols-2 gap-5 mb-6">
         <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
@@ -95,19 +104,23 @@ export default function Dashboard() {
           })}
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Tickets by LNMS Node</div>
-          {Object.entries(byLnms).map(([node, count]) => (
-            <div key={node} className="flex items-center gap-3 mb-3">
-              <div className="text-xs font-mono text-gray-500 w-28 shrink-0 truncate">{node}</div>
-              <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-700"
-                  style={{width:`${(count/totalByLnms)*100}%`,background:node.includes("MUM")?"#2563eb":"#7c3aed"}} />
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Operator Workload (Active Tickets)</div>
+          {Object.entries(stats?.operator_workload || {}).map(([node, count]) => {
+            const maxW = Math.max(...Object.values(stats?.operator_workload || {}), 1);
+            return (
+              <div key={node} className="flex items-center gap-3 mb-3">
+                <div className="text-xs font-mono text-gray-500 w-28 shrink-0 truncate">{node}</div>
+                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-700"
+                    style={{width:`${(count/maxW)*100}%`,background:"#7c3aed"}} />
+                </div>
+                <div className="text-xs font-mono text-gray-500 w-5 text-right">{count}</div>
               </div>
-              <div className="text-xs font-mono text-gray-500 w-5 text-right">{count}</div>
-            </div>
-          ))}
-          <div className="mt-4 pt-3 border-t border-gray-100">
+            );
+          })}
+          <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center">
             <div className="text-xs text-gray-400">TCP messages today: <span className="font-mono font-semibold text-blue-600">{stats?.tcp_messages_today??0}</span></div>
+            <div className="text-[10px] text-gray-300 uppercase tracking-tighter">Unified View Updated {new Date().toLocaleTimeString()}</div>
           </div>
         </div>
       </div>
@@ -116,7 +129,7 @@ export default function Dashboard() {
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Recent Tickets</h2>
-          <button onClick={()=>navigate("/tickets")} className="text-xs text-blue-600 hover:underline">View all →</button>
+          <button onClick={()=>navigate("/tickets")} className="text-xs text-blue-600 hover:underline">View all &rarr;</button>
         </div>
         <table className="w-full text-left">
           <thead className="bg-gray-50">

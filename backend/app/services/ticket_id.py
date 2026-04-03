@@ -11,18 +11,15 @@ def _parse_datetime(value: Optional[Union[str, datetime]]) -> Optional[datetime]
     if not text:
         return None
 
-    normalized = text.replace("Z", "+00:00")
-    for candidate in (normalized, normalized.replace(" ", "T")):
-        try:
-            return datetime.fromisoformat(candidate)
-        except ValueError:
-            continue
-
+    # Replace Z or +00:00 for simple parsing
+    text = text.replace("Z", "").replace("+00:00", "")
+    
     for fmt in (
         "%Y-%m-%d %H:%M:%S.%f",
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%dT%H:%M:%S.%f",
         "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
     ):
         try:
             return datetime.strptime(text, fmt)
@@ -32,12 +29,16 @@ def _parse_datetime(value: Optional[Union[str, datetime]]) -> Optional[datetime]
     return None
 
 
+import secrets
+
 def generate_ticket_id(
     created_at: Optional[Union[str, datetime]] = None,
     fallback_at: Optional[Union[str, datetime]] = None,
 ) -> str:
     dt = _parse_datetime(created_at) or _parse_datetime(fallback_at) or datetime.utcnow()
-    return f"TKT-{dt.strftime('%Y%m%d%H%M%S%f')}"
+    # Add 4 chars of randomness to prevent collisions on same-second timestamps
+    suffix = secrets.token_hex(2) 
+    return f"TKT-{dt.strftime('%Y%m%d%H%M%S%f')}{suffix}"
 
 
 def external_ticket_id(

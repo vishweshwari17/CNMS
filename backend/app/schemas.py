@@ -90,6 +90,9 @@ class DashboardStats(BaseModel):
     alarms_by_severity: Dict[str, int]   # {"Critical":2,"Major":1,...}
     tickets_by_lnms: Dict[str, int]      # {"LNMS-MUM-01":4,...}
     tcp_messages_today: int
+    sla_compliance_perc: float           # % of non-breached tickets
+    operator_workload: Dict[str, int]    # node_id -> active (Open/ACK) tickets
+    priority_distribution: Dict[str, int] # network-wide priority prediction
 
 
 # ── TCP sync log ─────────────────────────────────────────────

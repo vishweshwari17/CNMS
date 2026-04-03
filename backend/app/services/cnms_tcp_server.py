@@ -46,7 +46,7 @@ async def handle_client(reader, writer):
 
 
 async def main():
-    server = await asyncio.start_server(handle_client, "0.0.0.0", 9000)
+    server = await asyncio.start_server(handle_client, "0.0.0.0", 7776)
     print("[CNMS] TCP Server running on port 7776")
 
     async with server:

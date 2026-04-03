@@ -12,8 +12,8 @@ export const STATUS_STYLES = {
   Open:   "bg-blue-50 text-blue-700 border-blue-200",
   OPEN:   "bg-blue-50 text-blue-700 border-blue-200",
   ACK:    "bg-orange-50 text-orange-700 border-orange-200",
-  Closed: "bg-green-50 text-green-700 border-green-200",
-  CLOSED: "bg-green-50 text-green-700 border-green-200",
+  Closed: "bg-gray-100 text-gray-700 border-gray-200",
+  CLOSED: "bg-gray-100 text-gray-700 border-gray-200",
   RESOLVED: "bg-green-50 text-green-700 border-green-200",
 };
 export const LNMS_COLORS = {
@@ -93,12 +93,14 @@ export function AlarmBadge({ status, source, updatedAt }) {
   let bg = "bg-gray-100 text-gray-700 border-gray-200";
   if (status === "PROBLEM") bg = "bg-red-100 text-red-800 border-red-200";
   if (status === "ACTIVE") bg = "bg-yellow-100 text-yellow-800 border-yellow-200";
-  if (status === "RESOLVED") bg = "bg-green-100 text-green-800 border-green-200";
+  if (status === "RESOLVED" || status.startsWith("Resolved")) bg = "bg-green-100 text-green-800 border-green-200";
+
+  const showSource = status === 'ACTIVE' || status === 'PROBLEM';
 
   return (
     <div className="relative group inline-block">
       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border shadow-sm ${bg}`}>
-        {status} • {source || 'UNKNOWN'}
+        {status} {showSource && source ? `• ${source}` : ''}
       </span>
       <div className="absolute hidden group-hover:block z-20 w-48 bg-gray-900 shadow-lg text-white text-xs rounded p-3 -top-16 left-1/2 -translate-x-1/2">
         <div className="font-semibold text-gray-300 mb-1 border-b border-gray-700 pb-1">Alarm Info</div>

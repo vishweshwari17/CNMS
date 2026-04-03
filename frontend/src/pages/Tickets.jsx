@@ -1,9 +1,9 @@
 // src/pages/Tickets.jsx
 import { useEffect, useState } from "react";
-import { getTickets, getLnmsNodes, handleAcknowledgeTicket, handleResolveTicket, fullSyncFromCnms } from "../api/api";
+import { getTickets, getLnmsNodes, handleAcknowledgeTicket, handleResolveTicket, handleCloseTicket, fullSyncFromCnms } from "../api/api";
 import { SevBadge, StatusBadge, NodeBadge, SlaBadge, AlarmBadge, fmt } from "../components/Badges";
 import { useNavigate } from "react-router-dom";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 
 export default function Tickets() {
   const [tickets, setTickets] = useState([]);
@@ -218,6 +218,7 @@ export default function Tickets() {
                   <button onClick={(e) => { e.stopPropagation(); navigate(`/tickets/${t.id}`); }} className="px-3 py-1 bg-gray-800 text-white text-xs rounded hover:bg-gray-700 shadow-sm">View</button>
                   {t.status === "OPEN" && <button onClick={async (e) => { e.stopPropagation(); await handleAcknowledgeTicket(t.id); load(); }} className="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 shadow-sm">ACK</button>}
                   {t.status === "ACK" && <button onClick={async (e) => { e.stopPropagation(); const note = prompt("Enter resolution note") || "Resolved via UI"; await handleResolveTicket(t.id, "Admin", note); load(); }} className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 shadow-sm">Resolve</button>}
+                  {t.status === "RESOLVED" && <button onClick={async (e) => { e.stopPropagation(); if(confirm("Close this ticket?")) { await handleCloseTicket(t.id); load(); } }} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shadow-sm">Close</button>}
                 </td>
               </tr>
               );
@@ -226,16 +227,69 @@ export default function Tickets() {
         </table>
       </div>
 
-      {/* PAGINATION */}
-      {pages > 1 && (
-        <div className="flex gap-2 mt-4 justify-center">
-          <button onClick={() => setPage(p => Math.max(p - 1, 1))} disabled={page === 1} className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50">Prev</button>
-          {Array.from({ length: pages }, (_, i) => (
-            <button key={i} onClick={() => setPage(i + 1)} className={`px-3 py-1 rounded ${page === i + 1 ? "bg-blue-600 text-white" : "bg-gray-200"}`}>{i + 1}</button>
-          ))}
-          <button onClick={() => setPage(p => Math.min(p + 1, pages))} disabled={page === pages} className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50">Next</button>
+      {/* PAGINATION & ROW CUSTOMIZATION */}
+      <div className="mt-6 flex flex-col sm:flex-row items-center justify-between bg-white border border-gray-200 rounded-xl px-5 py-4 shadow-sm gap-4">
+        <div className="flex items-center gap-4">
+          <div className="text-xs text-gray-500 font-medium">
+            Showing <span className="text-gray-800 font-mono">{(page - 1) * perPage + 1}</span> to <span className="text-gray-800 font-mono">{Math.min(page * perPage, filtered.length)}</span> of <span className="text-blue-600 font-mono font-bold">{filtered.length}</span> tickets
+          </div>
+          <div className="h-4 w-[1px] bg-gray-200" />
+          <div className="flex items-center gap-2">
+             <span className="text-[10px] text-gray-400 uppercase tracking-tighter font-bold">Rows Per Page:</span>
+             <select 
+               value={perPage} 
+               onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }}
+               className="bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs font-mono text-gray-700 outline-none focus:border-blue-500 transition-colors"
+             >
+               {[10, 25, 50, 100].map(v => <option key={v} value={v}>{v}</option>)}
+             </select>
+          </div>
         </div>
-      )}
+
+        {pages > 1 && (
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => setPage(p => Math.max(p - 1, 1))} 
+              disabled={page === 1}
+              className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-blue-600 hover:border-blue-200 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            
+            <div className="flex items-center gap-1 mx-2">
+              {Array.from({ length: pages }, (_, i) => {
+                const p = i + 1;
+                // Show first, last, and range around current
+                if (p === 1 || p === pages || (p >= page - 1 && p <= page + 1)) {
+                  return (
+                    <button 
+                      key={p} 
+                      onClick={() => setPage(p)}
+                      className={`min-w-[32px] h-8 text-xs font-mono font-bold rounded-lg transition-all ${
+                        page === p 
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-200 translate-y-[-1px]" 
+                          : "text-gray-500 hover:bg-blue-50 hover:text-blue-600"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                }
+                if (p === 2 || p === pages - 1) return <span key={p} className="text-gray-300 px-1">···</span>;
+                return null;
+              })}
+            </div>
+
+            <button 
+              onClick={() => setPage(p => Math.min(p + 1, pages))} 
+              disabled={page === pages}
+              className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-blue-600 hover:border-blue-200 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

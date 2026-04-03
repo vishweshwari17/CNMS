@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS alarms (
   device_name   VARCHAR(150),
   alarm_type    VARCHAR(200) NOT NULL,
   severity      ENUM('Critical','Major','Minor','Warning','Info') DEFAULT 'Info',
-  status        ENUM('Active','Resolved','Suppressed') DEFAULT 'Active',
+  status        ENUM('OPEN','ACK','RESOLVED','CLOSED','ACTIVE') DEFAULT 'OPEN',
   description   TEXT,
   raised_at     DATETIME NOT NULL,
   resolved_at   DATETIME,
@@ -68,8 +68,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   device_name   VARCHAR(150),
   title         VARCHAR(300) NOT NULL,
   severity      ENUM('Critical','Major','Minor','Warning','Info') DEFAULT 'Info',
-  status        ENUM('Open','ACK','Closed') DEFAULT 'Open',
-  alarm_status  ENUM('PROBLEM','ACTIVE','RESOLVED'),
+  status        ENUM('OPEN','ACK','RESOLVED','CLOSED') DEFAULT 'OPEN',
+  alarm_status  VARCHAR(100), -- "Resolved by LNMS", etc.
   alarm_source  ENUM('LNMS','SPIC-NMS'),
   last_alarm_update DATETIME,
   sla_minutes   INT DEFAULT 60,
@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   updated_at    DATETIME DEFAULT NOW() ON UPDATE NOW(),
   FOREIGN KEY (lnms_node_id) REFERENCES lnms_nodes(node_id),
   FOREIGN KEY (alarm_id)     REFERENCES alarms(id) ON DELETE SET NULL,
+  UNIQUE(alarm_id),
   INDEX idx_status   (status),
   INDEX idx_severity (severity),
   INDEX idx_lnms     (lnms_node_id)

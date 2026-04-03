@@ -19,8 +19,9 @@ export const getTicket         = (id)        => API.get(`/tickets/${id}`);
 export const addComment        = (id, body)  => API.post(`/tickets/${id}/comment`, body);
 export const resolveTicket     = (id, body)  => API.put(`/tickets/${id}/resolve`, body);
 export const getAuditLogs      = (limit=100) => API.get("/audit", { params:{ limit } });
-export const getTcpLog         = (limit=50)  => API.get("/tcp-log", { params:{ limit } });
+export const getTcpLogs        = (limit=50)  => API.get("/tcp-log", { params:{ limit } });
 export const acknowledgeTicket = (id)        => API.put(`/tickets/${id}/ack`);
+export const closeTicket       = (id)        => API.put(`/tickets/${id}/close`);
 
 /* =========================
        HELPER FUNCTIONS
@@ -40,6 +41,15 @@ export const handleResolveTicket = async (ticketId, user, note) => {
     return await resolveTicket(ticketId, { resolution_note: note, resolved_by: user });
   } catch (err) {
     console.error(`Error resolving ticket ${ticketId}:`, err);
+    throw err;
+  }
+};
+
+export const handleCloseTicket = async (ticketId) => {
+  try {
+    return await closeTicket(ticketId);
+  } catch (err) {
+    console.error(`Error closing ticket ${ticketId}:`, err);
     throw err;
   }
 };

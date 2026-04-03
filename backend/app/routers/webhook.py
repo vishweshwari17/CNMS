@@ -19,6 +19,7 @@ import time
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Header, Request
+from fastapi.responses import JSONResponse
 
 from app.models import db
 from app.services.ticket_id import external_ticket_id
@@ -41,6 +42,10 @@ SLA_MAP = {
     "Info":     2880,
 }
 
+@router.get("/test-sync")
+async def test_sync_ping():
+    return {"message": "Sync endpoint is reachable and reloaded!"}
+
 @router.post("/lnms")
 async def lnms_entry(data: dict, x_lnms_secret: str = Header(None)):
     if WEBHOOK_SECRET and x_lnms_secret != WEBHOOK_SECRET:
@@ -62,50 +67,59 @@ async def receive_webhook(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    msg_type = payload.get("msg_type") or payload.get("type") or payload.get("event_type", "UNKNOWN")
-    node_id  = payload.get("node_id") or payload.get("lnms_node_id") or COMPANY_NODE_ID
+    try:
+        msg_type = payload.get("msg_type") or payload.get("type") or payload.get("event_type", "UNKNOWN")
+        node_id  = payload.get("node_id") or payload.get("lnms_node_id") or COMPANY_NODE_ID
 
-    record_sync_event(
-        "inbound",
-        "webhook_received",
-        node=node_id,
-        msg_type=msg_type,
-        ticket_id=payload.get("ticket_id") or payload.get("ticket_uid"),
-        alarm_uid=payload.get("alarm_uid") or payload.get("alarm_id"),
-    )
+        record_sync_event(
+            "inbound",
+            "webhook_received",
+            node=node_id,
+            msg_type=msg_type,
+            ticket_id=payload.get("ticket_id") or payload.get("ticket_uid"),
+            alarm_uid=payload.get("alarm_uid") or payload.get("alarm_id"),
+        )
 
-    log.info(f"[Webhook] Received {msg_type} from {node_id}")
+        log.info(f"[Webhook] Received {msg_type} from {node_id}")
 
-    # Log to tcp_sync_log
-    await _log_sync(node_id, msg_type)
+        # Log to tcp_sync_log
+        await _log_sync(node_id, msg_type)
 
-    # Upsert the node as connected
-    await _upsert_node(node_id, request.client.host if request.client else "unknown")
+        # Upsert the node as connected
+        await _upsert_node(node_id, request.client.host if request.client else "unknown")
 
-    handler = {
-        "ALARM_NEW":      _handle_alarm_new,
-        "alarm_new":      _handle_alarm_new,
-        "alarm":          _handle_alarm_new,
-        "ALARM_RESOLVED": _handle_alarm_resolved,
-        "alarm_resolved": _handle_alarm_resolved,
-        "DEVICE_UPDATE":  _handle_device,
-        "device_update":  _handle_device,
-        "device":         _handle_device,
-        "DEVICE_SYNC":    _handle_device_sync,
-        "HEARTBEAT":      _handle_heartbeat,
-        "heartbeat":      _handle_heartbeat,
-    }.get(msg_type)
+        handler = {
+            "ALARM_NEW":      _handle_alarm_new,
+            "alarm_new":      _handle_alarm_new,
+            "alarm":          _handle_alarm_new,
+            "ALARM_RESOLVED": _handle_alarm_resolved,
+            "alarm_resolved": _handle_alarm_resolved,
+            "DEVICE_UPDATE":  _handle_device,
+            "device_update":  _handle_device,
+            "device":         _handle_device,
+            "DEVICE_SYNC":    _handle_device_sync,
+            "HEARTBEAT":      _handle_heartbeat,
+            "heartbeat":      _handle_heartbeat,
+        }.get(msg_type)
 
-    if handler:
-        await handler(payload, node_id)
-    else:
-        log.warning(f"[Webhook] Unknown msg_type: {msg_type} — storing raw")
+        if handler:
+            await handler(payload, node_id)
+        else:
+            log.warning(f"[Webhook] Unknown msg_type: {msg_type} — storing raw")
 
-    # Broadcast to browser
-    if ws_manager:
-        await ws_manager.broadcast({"event": msg_type, "node": node_id})
+        # Broadcast to browser
+        if ws_manager:
+            await ws_manager.broadcast({"event": msg_type, "node": node_id})
 
-    return {"status": "ok", "msg_type": msg_type, "node": node_id}
+        return {"status": "ok", "msg_type": msg_type, "node": node_id}
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        log.error(f"[Webhook] ERROR: {e}\n{error_trace}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e), "traceback": error_trace}
+        )
 
 
 # ── Handlers ─────────────────────────────────────────────────
@@ -121,9 +135,9 @@ async def _handle_alarm_new(payload: dict, node_id: str):
     await db.execute(
         """INSERT INTO alarms
            (alarm_uid, lnms_node_id, device_name, alarm_type, severity, status, raised_at)
-           VALUES (%s,%s,%s,%s,%s,'Active',NOW())
+           VALUES (%s,%s,%s,%s,%s,'OPEN',NOW())
            ON DUPLICATE KEY UPDATE
-             severity=VALUES(severity), alarm_type=VALUES(alarm_type), status='Active'""",
+             severity=VALUES(severity), alarm_type=VALUES(alarm_type), status='OPEN'""",
         (alarm_uid, node_id, device_name, alarm_type, severity),
     )
 
@@ -183,7 +197,7 @@ async def _handle_alarm_new(payload: dict, node_id: str):
     )
 
     await db.execute(
-        "INSERT INTO audit_log (user_name,action,entity_type,entity_id) VALUES (%s,%s,%s,%s)",
+        "INSERT INTO audit_logs (user_name,action,entity_type,entity_id) VALUES (%s,%s,%s,%s)",
         (node_id, f"Webhook alarm: {alarm_uid}", "alarm", alarm_uid),
     )
     log.info(f"[Webhook] Alarm {alarm_uid} → ticket created")
@@ -194,12 +208,13 @@ async def _handle_alarm_resolved(payload: dict, node_id: str):
     if not alarm_uid:
         return
     await db.execute(
-        "UPDATE alarms SET status='Resolved', resolved_at=NOW() WHERE alarm_uid=%s",
+        "UPDATE alarms SET status='RESOLVED', resolved_at=NOW() WHERE alarm_uid=%s",
         (alarm_uid,),
     )
+    attr = 'Resolved by SPIC-NMS' if node_id == COMPANY_NODE_ID else 'Resolved by LNMS'
     await db.execute(
-        "UPDATE tickets SET status='CLOSED', alarm_status='RESOLVED', last_alarm_update=NOW(), updated_at=NOW() WHERE alarm_uid=%s AND status != 'CLOSED'",
-        (alarm_uid,),
+        "UPDATE tickets SET status='CLOSED', alarm_status=%s, last_alarm_update=NOW(), updated_at=NOW() WHERE alarm_uid=%s AND status != 'CLOSED'",
+        (attr, alarm_uid),
     )
     log.info(f"[Webhook] Alarm {alarm_uid} resolved")
 
@@ -240,9 +255,9 @@ async def _handle_heartbeat(payload: dict, node_id: str):
 async def _upsert_node(node_id: str, ip: str):
     await db.execute(
         """INSERT INTO lnms_nodes
-           (node_id, display_name, ip_address, port, location, status, tcp_live, last_seen)
-           VALUES (%s,%s,%s,%s,%s,'CONNECTED',1,NOW())
-           ON DUPLICATE KEY UPDATE status='CONNECTED', tcp_live=1, last_seen=NOW()""",
+           (node_id, label, ip_address, port, location, status, last_seen)
+           VALUES (%s,%s,%s,%s,%s,'CONNECTED',NOW())
+           ON DUPLICATE KEY UPDATE status='CONNECTED', last_seen=NOW()""",
         (node_id, f"Company LNMS ({ip})", ip, 8000, "Remote"),
     )
 
